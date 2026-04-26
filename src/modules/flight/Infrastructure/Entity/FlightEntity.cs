@@ -1,6 +1,8 @@
 // El vuelo es la instancia concreta de una ruta en una fecha específica, con avión y tripulación asignados
 using SistemaDeGestionDeTicketsAereos.src.modules.Aircraft.Infrastructure.Entity;
 using SistemaDeGestionDeTicketsAereos.src.modules.booking.Infrastructure.Entity;
+using SistemaDeGestionDeTicketsAereos.src.modules.bookingFlightChange.Infrastructure.Entity;
+using SistemaDeGestionDeTicketsAereos.src.modules.bookingWaitList.Infrastructure.Entity;
 using SistemaDeGestionDeTicketsAereos.src.modules.crew.Infrastructure.Entity;
 using SistemaDeGestionDeTicketsAereos.src.modules.fare.Infrastructure.Entity;
 using SistemaDeGestionDeTicketsAereos.src.modules.flightStatusHistory.Infrastructure.Entity;
@@ -73,4 +75,13 @@ public class FlightEntity
 
     // Historial de cambios de estado del vuelo
     public ICollection<FlightStatusHistoryEntity> FlightStatusHistories { get; set; } = new List<FlightStatusHistoryEntity>();
+
+    // Cambios de vuelo donde este vuelo era el vuelo anterior
+    public ICollection<BookingFlightChangeEntity> OldFlightChanges { get; set; } = new List<BookingFlightChangeEntity>();
+
+    // Cambios de vuelo donde este vuelo fue el vuelo nuevo asignado
+    public ICollection<BookingFlightChangeEntity> NewFlightChanges { get; set; } = new List<BookingFlightChangeEntity>();
+
+    // Entradas de lista de espera que desean este vuelo
+    public ICollection<BookingWaitListEntity> WaitListEntries { get; set; } = new List<BookingWaitListEntity>();
 }
