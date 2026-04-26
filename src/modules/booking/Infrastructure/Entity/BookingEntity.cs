@@ -1,7 +1,9 @@
 // La reserva agrupa tickets, pagos y clientes para un vuelo específico, y lleva un historial de estados
 using SistemaDeGestionDeTicketsAereos.src.modules.bookingCancellation.Infrastructure.Entity;
 using SistemaDeGestionDeTicketsAereos.src.modules.bookingCustomer.Infrastructure.Entity;
+using SistemaDeGestionDeTicketsAereos.src.modules.bookingFlightChange.Infrastructure.Entity;
 using SistemaDeGestionDeTicketsAereos.src.modules.bookingStatusHistory.Infrastructure.Entity;
+using SistemaDeGestionDeTicketsAereos.src.modules.bookingWaitList.Infrastructure.Entity;
 using SistemaDeGestionDeTicketsAereos.src.modules.flight.Infrastructure.Entity;
 using SistemaDeGestionDeTicketsAereos.src.modules.payment.Infrastructure.Entity;
 using SistemaDeGestionDeTicketsAereos.src.modules.person.Infrastructure.Entity;
@@ -72,4 +74,10 @@ public class BookingEntity
 
     // Historial de cambios de estado de la reserva
     public ICollection<BookingStatusHistoryEntity> BookingStatusHistories { get; set; } = new List<BookingStatusHistoryEntity>();
+
+    // Historial de reprogramaciones de vuelo de esta reserva
+    public ICollection<BookingFlightChangeEntity> BookingFlightChanges { get; set; } = new List<BookingFlightChangeEntity>();
+
+    // Entradas de lista de espera de esta reserva
+    public ICollection<BookingWaitListEntity> BookingWaitListEntries { get; set; } = new List<BookingWaitListEntity>();
 }

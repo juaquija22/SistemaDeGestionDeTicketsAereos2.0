@@ -94,6 +94,16 @@ public sealed class BookingRepository : IBookingRepository
         _dbContext.Set<BookingEntity>().Remove(entity);
     }
 
+    public async Task<IReadOnlyList<Booking>> ListByFlightAsync(int idFlight, CancellationToken ct = default)
+    {
+        var entities = await _dbContext.Set<BookingEntity>()
+            .AsNoTracking()
+            .Where(x => x.IdFlight == idFlight)
+            .OrderBy(x => x.IdBooking)
+            .ToListAsync(ct);
+        return entities.Select(ToDomain).ToList();
+    }
+
     private static Booking ToDomain(BookingEntity entity)
     {
         return Booking.Create(entity.IdBooking, entity.BookingCode, entity.FlightDate, entity.CreationDate, entity.SeatCount, entity.Observations, entity.IdFlight, entity.IdStatus);
