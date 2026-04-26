@@ -55,6 +55,10 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using SistemaDeGestionDeTicketsAereos.src.modules.booking.Infrastructure.Entity;
+using SistemaDeGestionDeTicketsAereos.src.modules.bookingFlightChange.Application.UseCases;
+using SistemaDeGestionDeTicketsAereos.src.modules.bookingFlightChange.Infrastructure.Repositories;
+using SistemaDeGestionDeTicketsAereos.src.modules.bookingWaitList.Application.UseCases;
+using SistemaDeGestionDeTicketsAereos.src.modules.bookingWaitList.Infrastructure.Repositories;
 using SistemaDeGestionDeTicketsAereos.src.shared.helpers;
 using SistemaDeGestionDeTicketsAereos.src.shared.context;
 using SistemaDeGestionDeTicketsAereos.src.shared.ui.menus;
@@ -444,19 +448,23 @@ public sealed class BookingMenu
             {
                 var option = AnsiConsole.Prompt(
                     new SelectionPrompt<string>()
-                        .PageSize(9)
+                        .PageSize(11)
                         .AddChoices("1. Crear reserva", "2. Listar reservas", "3. Actualizar reserva",
                                     "4. Agregar pasajero a reserva", "5. Registrar cambio de estado",
-                                    "6. Cancelar reserva", "7. Eliminar reserva", "0. Volver"));
+                                    "6. Cancelar reserva", "7. Eliminar reserva",
+                                    "8. Lista de espera por vuelo", "9. Historial de cambios de vuelo",
+                                    "0. Volver"));
                 switch (option)
                 {
-                    case "1. Crear reserva":               await CreateAsync(ct);          break;
-                    case "2. Listar reservas":            await ListAsync(ct);            break;
-                    case "3. Actualizar reserva":          await UpdateAsync(ct);          break;
-                    case "4. Agregar pasajero a reserva":  await AddPassengerAsync(ct);    break;
-                    case "5. Registrar cambio de estado":  await AddStatusHistoryAsync(ct);break;
-                    case "6. Cancelar reserva":            await CancelAsync(ct);          break;
-                    case "7. Eliminar reserva":            await DeleteAsync(ct);          break;
+                    case "1. Crear reserva":               await CreateAsync(ct);                      break;
+                    case "2. Listar reservas":             await ListAsync(ct);                        break;
+                    case "3. Actualizar reserva":          await UpdateAsync(ct);                      break;
+                    case "4. Agregar pasajero a reserva":  await AddPassengerAsync(ct);                break;
+                    case "5. Registrar cambio de estado":  await AddStatusHistoryAsync(ct);            break;
+                    case "6. Cancelar reserva":            await CancelAsync(ct);                      break;
+                    case "7. Eliminar reserva":            await DeleteAsync(ct);                      break;
+                    case "8. Lista de espera por vuelo":   await AdminViewWaitListByFlightAsync(ct);   break;
+                    case "9. Historial de cambios de vuelo": await AdminViewFlightChangeHistoryAsync(ct); break;
                     case "0. Volver": back = true; break;
                 }
             }
@@ -467,11 +475,13 @@ public sealed class BookingMenu
                     "Los datos de pasajeros se completan en ese mismo flujo al reservar.[/]\n");
                 var option = AnsiConsole.Prompt(
                     new SelectionPrompt<string>()
-                        .PageSize(5)
+                        .PageSize(7)
                         .AddChoices(
                             "1. Ver mis reservas",
                             "2. Ver pagos realizados",
                             "3. Cancelar mi reserva",
+                            "4. Reprogramar mi reserva",
+                            "5. Mi lista de espera",
                             "0. Volver"));
                 switch (option)
                 {
@@ -483,6 +493,12 @@ public sealed class BookingMenu
                         break;
                     case "3. Cancelar mi reserva":
                         await CancelAsync(ct);
+                        break;
+                    case "4. Reprogramar mi reserva":
+                        await ClientRescheduleAsync(ct);
+                        break;
+                    case "5. Mi lista de espera":
+                        await ClientViewWaitListAsync(ct);
                         break;
                     case "0. Volver": back = true; break;
                 }
@@ -2262,6 +2278,22 @@ public sealed class BookingMenu
 
             await context.SaveChangesAsync(ct);
             AnsiConsole.MarkupLine("\n[green]Cancelación registrada correctamente.[/]");
+
+            // Intentar promover automáticamente la primera reserva en espera para el vuelo liberado
+            var idStatusWaiting  = await SelectStatusByNameAsync(context, "WaitList", "En Espera",  ct);
+            var idStatusPromoted = await SelectStatusByNameAsync(context, "WaitList", "Promovida",  ct);
+            var idStatusConfirmed = await SelectStatusByNameAsync(context, BookingEntityType, BookingStatusConfirmed, ct);
+            var idStatusPaid      = await SelectStatusByNameAsync(context, BookingEntityType, BookingStatusPaid,      ct);
+            var promoted = await new PromoteFromWaitListUseCase(
+                new BookingRepository(context),
+                new FlightRepository(context),
+                new BookingFlightChangeRepository(context),
+                new BookingWaitListRepository(context),
+                new UnitOfWork(context))
+                .ExecuteAsync(booking.IdFlight, idStatusWaiting, idStatusPromoted,
+                              idStatusConfirmed, idStatusPaid, AppState.IdUser, ct);
+            if (promoted)
+                AnsiConsole.MarkupLine("[green]Se promovió automáticamente una reserva desde la lista de espera.[/]");
         }
         catch (Exception ex) { EntityPersistenceUiFeedback.Write(ex); }
         AnsiConsole.MarkupLine("[grey]Presiona cualquier tecla para continuar...[/]"); Console.ReadKey();
@@ -2779,6 +2811,226 @@ public sealed class BookingMenu
             var deleted = await new DeleteBookingUseCase(new BookingRepository(context)).ExecuteAsync(id, ct);
             await context.SaveChangesAsync(ct);
             AnsiConsole.MarkupLine(deleted ? "\n[green]Reserva eliminada correctamente.[/]" : "\n[yellow]No se pudo eliminar la reserva.[/]");
+        }
+        catch (Exception ex) { EntityPersistenceUiFeedback.Write(ex); }
+        AnsiConsole.MarkupLine("[grey]Presiona cualquier tecla para continuar...[/]"); Console.ReadKey();
+    }
+
+    private static async Task AdminViewWaitListByFlightAsync(CancellationToken ct)
+    {
+        Console.Clear();
+        AnsiConsole.Write(new Rule("[blue]LISTA DE ESPERA POR VUELO[/]").Centered());
+        try
+        {
+            using var context = DbContextFactory.Create();
+            var allFlights = await new GetAllFlightsUseCase(new FlightRepository(context)).ExecuteAsync(ct);
+            if (!allFlights.Any())
+                throw new InvalidOperationException("No hay vuelos registrados.");
+
+            var selected = AnsiConsole.Prompt(
+                new SelectionPrompt<string>()
+                    .Title("Seleccioná el vuelo:")
+                    .PageSize(10)
+                    .AddChoices(allFlights.Select(f =>
+                        $"{f.Id.Value}. {f.Number.Value} — {f.Date.Value:yyyy-MM-dd} {f.DepartureTime.Value:HH\\:mm} (disponibles: {f.AvailableSeats.Value})")));
+            var idFlight = int.Parse(selected.Split('.')[0]);
+
+            var entries = await new GetBookingWaitListsByFlightUseCase(new BookingWaitListRepository(context))
+                .ExecuteAsync(idFlight, ct);
+
+            if (!entries.Any())
+            {
+                AnsiConsole.MarkupLine("[yellow]No hay entradas en lista de espera para este vuelo.[/]");
+                AnsiConsole.MarkupLine("[grey]Presiona cualquier tecla para continuar...[/]"); Console.ReadKey();
+                return;
+            }
+
+            var statuses = await new GetAllSystemStatusesUseCase(new SystemStatusRepository(context)).ExecuteAsync(ct);
+            var statusMap = statuses.ToDictionary(s => s.Id.Value, s => s.Name.Value);
+
+            var table = new Table().Border(TableBorder.Rounded)
+                .AddColumn("ID").AddColumn("Reserva").AddColumn("Posición").AddColumn("Solicitado").AddColumn("Estado");
+            foreach (var e in entries.OrderBy(e => e.Position.Value))
+            {
+                var statusName = statusMap.TryGetValue(e.IdStatus, out var sn) ? sn : e.IdStatus.ToString();
+                table.AddRow(
+                    e.Id.Value.ToString(),
+                    e.IdBooking.ToString(),
+                    e.Position.Value.ToString(),
+                    e.RequestedAt.Value.ToString("yyyy-MM-dd HH:mm"),
+                    statusName);
+            }
+            AnsiConsole.Write(table);
+        }
+        catch (Exception ex) { EntityPersistenceUiFeedback.Write(ex); }
+        AnsiConsole.MarkupLine("[grey]Presiona cualquier tecla para continuar...[/]"); Console.ReadKey();
+    }
+
+    private static async Task AdminViewFlightChangeHistoryAsync(CancellationToken ct)
+    {
+        Console.Clear();
+        AnsiConsole.Write(new Rule("[blue]HISTORIAL DE CAMBIOS DE VUELO[/]").Centered());
+        try
+        {
+            using var context = DbContextFactory.Create();
+            var allBookings = await new GetAllBookingsUseCase(new BookingRepository(context)).ExecuteAsync(ct);
+            if (!allBookings.Any())
+                throw new InvalidOperationException("No hay reservas registradas.");
+
+            var selected = AnsiConsole.Prompt(
+                new SelectionPrompt<string>()
+                    .Title("Seleccioná la reserva:")
+                    .PageSize(10)
+                    .AddChoices(allBookings.Select(b =>
+                        $"{b.Id.Value}. {b.Code.Value} — {b.FlightDate.Value:yyyy-MM-dd HH:mm}")));
+            var idBooking = int.Parse(selected.Split('.')[0]);
+
+            var changes = await new GetBookingFlightChangesByBookingUseCase(new BookingFlightChangeRepository(context))
+                .ExecuteAsync(idBooking, ct);
+
+            if (!changes.Any())
+            {
+                AnsiConsole.MarkupLine("[yellow]No hay cambios de vuelo registrados para esta reserva.[/]");
+                AnsiConsole.MarkupLine("[grey]Presiona cualquier tecla para continuar...[/]"); Console.ReadKey();
+                return;
+            }
+
+            var table = new Table().Border(TableBorder.Rounded)
+                .AddColumn("ID").AddColumn("Fecha cambio").AddColumn("Motivo")
+                .AddColumn("Vuelo anterior").AddColumn("Vuelo nuevo").AddColumn("Usuario");
+            foreach (var c in changes.OrderBy(c => c.ChangeDate.Value))
+            {
+                table.AddRow(
+                    c.Id.Value.ToString(),
+                    c.ChangeDate.Value.ToString("yyyy-MM-dd HH:mm"),
+                    c.Reason.Value ?? "-",
+                    c.IdOldFlight.ToString(),
+                    c.IdNewFlight.ToString(),
+                    c.IdUser.ToString());
+            }
+            AnsiConsole.Write(table);
+        }
+        catch (Exception ex) { EntityPersistenceUiFeedback.Write(ex); }
+        AnsiConsole.MarkupLine("[grey]Presiona cualquier tecla para continuar...[/]"); Console.ReadKey();
+    }
+
+    private static async Task ClientRescheduleAsync(CancellationToken ct)
+    {
+        Console.Clear();
+        AnsiConsole.Write(new Rule("[yellow]REPROGRAMAR MI RESERVA[/]").Centered());
+        try
+        {
+            var myIds = await GetMyBookingIdsAsync(ct);
+            if (!myIds.Any())
+            {
+                AnsiConsole.MarkupLine("[yellow]No tenés reservas registradas.[/]");
+                AnsiConsole.MarkupLine("[grey]Presiona cualquier tecla para continuar...[/]"); Console.ReadKey();
+                return;
+            }
+
+            using var context = DbContextFactory.Create();
+            var allBookings = await new GetAllBookingsUseCase(new BookingRepository(context)).ExecuteAsync(ct);
+            var confirmedId = await SelectStatusByNameAsync(context, BookingEntityType, BookingStatusConfirmed, ct);
+            var paidId = await SelectStatusByNameAsync(context, BookingEntityType, BookingStatusPaid, ct);
+
+            var mine = allBookings
+                .Where(b => myIds.Contains(b.Id.Value) && (b.IdStatus == confirmedId || b.IdStatus == paidId))
+                .ToList();
+
+            if (!mine.Any())
+            {
+                AnsiConsole.MarkupLine("[yellow]No tenés reservas confirmadas o pagadas disponibles para reprogramar.[/]");
+                AnsiConsole.MarkupLine("[grey]Presiona cualquier tecla para continuar...[/]"); Console.ReadKey();
+                return;
+            }
+
+            var selectedBooking = AnsiConsole.Prompt(
+                new SelectionPrompt<string>()
+                    .Title("Seleccioná la reserva a reprogramar:")
+                    .PageSize(10)
+                    .AddChoices(mine.Select(b =>
+                        $"{b.Id.Value}. {b.Code.Value} — {b.FlightDate.Value:yyyy-MM-dd HH:mm} ({b.SeatCount.Value} asiento/s)")));
+            var idBooking = int.Parse(selectedBooking.Split('.')[0]);
+
+            var allFlights = await new GetAllFlightsUseCase(new FlightRepository(context)).ExecuteAsync(ct);
+            if (!allFlights.Any())
+                throw new InvalidOperationException("No hay vuelos registrados en el sistema.");
+            var selectedFlight = AnsiConsole.Prompt(
+                new SelectionPrompt<string>()
+                    .Title("Seleccioná el nuevo vuelo (vuelos sin cupo ingresan a lista de espera):")
+                    .PageSize(10)
+                    .AddChoices(allFlights.Select(f =>
+                        $"{f.Id.Value}. {f.Number.Value} — {f.Date.Value:yyyy-MM-dd} {f.DepartureTime.Value:HH\\:mm} (disponibles: {f.AvailableSeats.Value})")));
+            var idNewFlight = int.Parse(selectedFlight.Split('.')[0]);
+
+            var reasonRaw = AnsiConsole.Prompt(
+                new TextPrompt<string>("Motivo del cambio (Enter para omitir):").AllowEmpty()).Trim();
+            string? reason = string.IsNullOrEmpty(reasonRaw) ? null : reasonRaw;
+
+            var idStatusWaiting = await SelectStatusByNameAsync(context, "WaitList", "En Espera", ct);
+
+            var result = await new RescheduleBookingUseCase(
+                new BookingRepository(context),
+                new FlightRepository(context),
+                new BookingFlightChangeRepository(context),
+                new BookingWaitListRepository(context),
+                new UnitOfWork(context))
+                .ExecuteAsync(idBooking, idNewFlight, confirmedId, paidId, idStatusWaiting, AppState.IdUser, reason, ct);
+
+            if (result.IsRescheduled)
+                AnsiConsole.MarkupLine("\n[green]Reserva reprogramada exitosamente al nuevo vuelo.[/]");
+            else
+                AnsiConsole.MarkupLine($"\n[yellow]Sin cupo disponible. Quedaste en lista de espera en posición [bold]{result.WaitListPosition}[/].[/]");
+        }
+        catch (Exception ex) { EntityPersistenceUiFeedback.Write(ex); }
+        AnsiConsole.MarkupLine("[grey]Presiona cualquier tecla para continuar...[/]"); Console.ReadKey();
+    }
+
+    private static async Task ClientViewWaitListAsync(CancellationToken ct)
+    {
+        Console.Clear();
+        AnsiConsole.Write(new Rule("[blue]MI LISTA DE ESPERA[/]").Centered());
+        try
+        {
+            var myIds = await GetMyBookingIdsAsync(ct);
+            if (!myIds.Any())
+            {
+                AnsiConsole.MarkupLine("[yellow]No tenés reservas registradas.[/]");
+                AnsiConsole.MarkupLine("[grey]Presiona cualquier tecla para continuar...[/]"); Console.ReadKey();
+                return;
+            }
+
+            using var context = DbContextFactory.Create();
+            var all = await new GetAllBookingWaitListsUseCase(new BookingWaitListRepository(context)).ExecuteAsync(ct);
+            var mine = all.Where(e => myIds.Contains(e.IdBooking))
+                .OrderBy(e => e.IdFlight).ThenBy(e => e.Position.Value)
+                .ToList();
+
+            if (!mine.Any())
+            {
+                AnsiConsole.MarkupLine("[yellow]No estás en ninguna lista de espera actualmente.[/]");
+                AnsiConsole.MarkupLine("[grey]Presiona cualquier tecla para continuar...[/]"); Console.ReadKey();
+                return;
+            }
+
+            var statuses = await new GetAllSystemStatusesUseCase(new SystemStatusRepository(context)).ExecuteAsync(ct);
+            var statusMap = statuses.ToDictionary(s => s.Id.Value, s => s.Name.Value);
+
+            var table = new Table().Border(TableBorder.Rounded)
+                .AddColumn("ID").AddColumn("Reserva").AddColumn("Vuelo")
+                .AddColumn("Posición").AddColumn("Solicitado").AddColumn("Estado");
+            foreach (var e in mine)
+            {
+                var statusName = statusMap.TryGetValue(e.IdStatus, out var sn) ? sn : e.IdStatus.ToString();
+                table.AddRow(
+                    e.Id.Value.ToString(),
+                    e.IdBooking.ToString(),
+                    e.IdFlight.ToString(),
+                    e.Position.Value.ToString(),
+                    e.RequestedAt.Value.ToString("yyyy-MM-dd HH:mm"),
+                    statusName);
+            }
+            AnsiConsole.Write(table);
         }
         catch (Exception ex) { EntityPersistenceUiFeedback.Write(ex); }
         AnsiConsole.MarkupLine("[grey]Presiona cualquier tecla para continuar...[/]"); Console.ReadKey();
