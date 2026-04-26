@@ -185,6 +185,16 @@ public sealed class FlightRepository : IFlightRepository
         _dbContext.Set<FlightEntity>().Remove(entity);
     }
 
+    public async Task<IReadOnlyList<Flight>> ListByRouteAsync(int idRoute, CancellationToken ct = default)
+    {
+        var entities = await _dbContext.Set<FlightEntity>()
+            .AsNoTracking()
+            .Where(x => x.IdRoute == idRoute)
+            .OrderBy(x => x.Date)
+            .ToListAsync(ct);
+        return entities.Select(ToDomain).ToList();
+    }
+
     private static Flight ToDomain(FlightEntity entity)
     {
         return Flight.Create(entity.IdFlight, entity.FlightNumber, entity.Date, entity.DepartureTime, entity.ArrivalTime, entity.TotalCapacity, entity.AvailableSeats, entity.IdRoute, entity.IdAircraft, entity.IdStatus, entity.IdCrew, entity.IdFare);
