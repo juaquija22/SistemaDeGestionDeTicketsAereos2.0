@@ -1,3 +1,4 @@
+
 namespace SistemaDeGestionDeTicketsAereos.src.modules.bookingFlightChange.Domain.valueObject;
 
 // Value Object para la razón del cambio de vuelo de una reserva — es opcional
