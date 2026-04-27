@@ -39,7 +39,8 @@ public sealed class PromoteFromWaitListUseCase
     // Se llama después de que una reserva es cancelada para reasignar el cupo liberado
     // idFlight: vuelo que liberó el cupo — se buscan entradas en espera para ese vuelo
     // Retorna true si se promovió alguna reserva, false si no había nadie en espera
-    public async Task<bool> ExecuteAsync(
+    // Retorna el ID de la reserva promovida, o null si no había nadie en espera / no se pudo promover
+    public async Task<int?> ExecuteAsync(
         int idFlight,
         int idStatusWaiting,
         int idStatusPromoted,
@@ -51,21 +52,21 @@ public sealed class PromoteFromWaitListUseCase
         // 1. Obtener la primera entrada pendiente en la lista de espera para este vuelo
         var entry = await _waitListRepo.GetNextPendingByFlightAsync(idFlight, idStatusWaiting, ct);
         if (entry is null)
-            return false;
+            return null;
 
         // 2. Cargar la reserva asociada a esa entrada
         var booking = await _bookingRepo.GetByIdAsync(BookingId.Create(entry.IdBooking), ct);
         if (booking is null)
-            return false;
+            return null;
 
         // 3. Verificar que la reserva siga activa (no cancelada mientras esperaba)
         if (booking.IdStatus != idStatusConfirmed && booking.IdStatus != idStatusPaid)
-            return false;
+            return null;
 
         // 4. Cargar el vuelo deseado y verificar que haya cupos suficientes
         var desiredFlight = await _flightRepo.GetByIdAsync(FlightId.Create(idFlight), ct);
         if (desiredFlight is null || desiredFlight.AvailableSeats.Value < booking.SeatCount.Value)
-            return false;
+            return null;
 
         // 5. Cargar el vuelo actual de la reserva para liberar sus cupos
         var currentFlight = await _flightRepo.GetByIdAsync(FlightId.Create(booking.IdFlight), ct);
@@ -107,13 +108,17 @@ public sealed class PromoteFromWaitListUseCase
             entry.IdFlight, idStatusPromoted);
         await _waitListRepo.UpdateAsync(promoted, ct);
 
-        // 10. Registrar el cambio en el historial con motivo automático
-        var change = BookingFlightChange.CreateNew(
-            DateTime.Now, "Promoción automática desde lista de espera",
-            entry.IdBooking, booking.IdFlight, idFlight, idUser);
-        await _changeRepo.AddAsync(change, ct);
+        // 10. Registrar el cambio en el historial solo cuando hay un cambio real de vuelo
+        // (si booking.IdFlight == idFlight la reserva ya era para ese vuelo: se creó como placeholder de lista de espera)
+        if (booking.IdFlight != idFlight)
+        {
+            var change = BookingFlightChange.CreateNew(
+                DateTime.Now, "Promoción automática desde lista de espera",
+                entry.IdBooking, booking.IdFlight, idFlight, idUser);
+            await _changeRepo.AddAsync(change, ct);
+        }
 
         await _unitOfWork.SaveChangesAsync(ct);
-        return true;
+        return entry.IdBooking;
     }
 }

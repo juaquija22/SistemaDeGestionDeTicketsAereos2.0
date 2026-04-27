@@ -121,3 +121,242 @@ Los clientes finales se gestionan con rol distinto (por ejemplo registro desde e
 
 ---
 
+## Examen  — Reprogramación de Vuelo y Lista de Espera
+
+Esta sección documenta las **5 funcionalidades nuevas** añadidas al sistema en el Examen 4, junto con todos los archivos creados o modificados para implementarlas.
+
+---
+
+### Funcionalidades Implementadas
+
+#### 1. Reprogramación de Reservas
+Un cliente puede solicitar mover su reserva (confirmada o pagada) a otro vuelo de la **misma ruta**. El sistema valida la compatibilidad de ruta, ajusta los cupos del vuelo anterior y del nuevo, y registra el cambio en el historial.
+
+**Caso de uso:** `RescheduleBookingUseCase`
+**Acceso:** Menú cliente → opción `4. Reprogramar mi reserva`
+
+#### 2. Validación de Compatibilidad de Vuelo
+Antes de reprogramar, el sistema verifica que el vuelo nuevo tenga el **mismo origen y destino** (mismo `IdRoute`) que el vuelo actual de la reserva. Si la ruta es diferente, se lanza una excepción con el mensaje *"Flights are incompatible: the new flight must have the same origin and destination."*
+
+**Implementado dentro de:** `RescheduleBookingUseCase`
+
+#### 3. Lista de Espera
+Si el vuelo solicitado no tiene cupos suficientes, la reserva **no se rechaza**; en cambio, se agrega automáticamente a la lista de espera con una posición calculada (cantidad de entradas pendientes + 1). No se permiten duplicados: una misma reserva no puede estar dos veces en espera para el mismo vuelo.
+
+**Caso de uso:** `RescheduleBookingUseCase` (rama sin cupo) + `CreateBookingWaitListUseCase`
+**Acceso:** Menú cliente → opción `4. Reprogramar mi reserva` (flujo automático si el vuelo está lleno)
+**Acceso:** Menú cliente → opción `5. Mi lista de espera` (consulta)
+**Acceso:** Menú admin → opción `8. Lista de espera por vuelo` (vista admin)
+
+#### 4. Liberación Automática de Cupos
+Cuando se cancela una reserva, el sistema intenta **promover automáticamente** la primera reserva en espera para ese vuelo (ordenada por posición). Si hay alguien esperando, su reserva es reprogramada al vuelo liberado, los cupos se ajustan en ambos vuelos y la entrada en lista de espera queda marcada como *"Promovida"*.
+
+**Caso de uso:** `PromoteFromWaitListUseCase`
+**Disparador:** `CancelAsync` en `BookingMenu` (se ejecuta automáticamente al final de cada cancelación)
+
+#### 5. Historial de Cambios de Vuelo
+Cada vez que una reserva cambia de vuelo (reprogramación manual o promoción automática desde lista de espera), se registra un `BookingFlightChange` con: fecha del cambio, motivo opcional, vuelo anterior, vuelo nuevo y usuario que ejecutó la operación.
+
+**Acceso:** Menú admin → opción `9. Historial de cambios de vuelo`
+
+---
+
+### Nuevos Módulos
+
+#### `bookingFlightChange`
+Registra el historial inmutable de cada reprogramación de vuelo.
+
+```
+src/modules/bookingFlightChange/
+├── Domain/
+│   ├── aggregate/
+│   │   └── BookingFlightChange.cs           # Agregado: Id, ChangeDate, Reason, IdBooking, IdOldFlight, IdNewFlight, IdUser
+│   ├── valueObject/
+│   │   ├── BookingFlightChangeId.cs         # int >= 0
+│   │   ├── BookingFlightChangeDate.cs       # DateTime, no futura
+│   │   └── BookingFlightChangeReason.cs     # string?, máx 500 chars
+│   └── Repositories/
+│       └── IBookingFlightChangeRepository.cs  # Sin UpdateAsync (historial inmutable)
+├── Infrastructure/
+│   ├── Entity/
+│   │   ├── BookingFlightChangeEntity.cs
+│   │   └── BookingFlightChangeEntityConfiguration.cs  # Dos FKs a Flight con WithMany explícito
+│   └── Repositories/
+│       └── BookingFlightChangeRepository.cs
+└── Application/
+    ├── UseCases/
+    │   ├── CreateBookingFlightChangeUseCase.cs
+    │   ├── GetAllBookingFlightChangesUseCase.cs
+    │   ├── GetBookingFlightChangeByIdUseCase.cs
+    │   └── GetBookingFlightChangesByBookingUseCase.cs
+    ├── Interfaces/
+    │   └── IBookingFlightChangeService.cs
+    └── Services/
+        └── BookingFlightChangeService.cs
+```
+
+#### `bookingWaitList`
+Gestiona la cola de espera de reservas para vuelos sin cupos.
+
+```
+src/modules/bookingWaitList/
+├── Domain/
+│   ├── aggregate/
+│   │   └── BookingWaitList.cs               # Agregado: Id, Position, RequestedAt, IdBooking, IdFlight, IdStatus
+│   ├── valueObject/
+│   │   ├── BookingWaitListId.cs             # int >= 0
+│   │   ├── BookingWaitListPosition.cs       # int >= 1
+│   │   └── BookingWaitListRequestedAt.cs    # DateTime, no futura
+│   └── Repositories/
+│       └── IBookingWaitListRepository.cs    # Incluye GetNextPendingByFlightAsync, CountPendingByFlightAsync, ExistsAsync
+├── Infrastructure/
+│   ├── Entity/
+│   │   ├── BookingWaitListEntity.cs
+│   │   └── BookingWaitListEntityConfiguration.cs
+│   └── Repositories/
+│       └── BookingWaitListRepository.cs
+└── Application/
+    ├── UseCases/
+    │   ├── CreateBookingWaitListUseCase.cs   # Verifica duplicado y calcula posición
+    │   ├── GetAllBookingWaitListsUseCase.cs
+    │   ├── GetBookingWaitListByIdUseCase.cs
+    │   ├── GetBookingWaitListsByFlightUseCase.cs
+    │   └── DeleteBookingWaitListUseCase.cs
+    ├── Interfaces/
+    │   └── IBookingWaitListService.cs
+    └── Services/
+        └── BookingWaitListService.cs
+```
+
+---
+
+### Nuevos Casos de Uso en el Módulo `booking`
+
+| Archivo | Descripción |
+|---------|-------------|
+| `src/modules/booking/Application/UseCases/RescheduleBookingUseCase.cs` | Orquesta la reprogramación: valida estado, verifica compatibilidad de ruta, asigna al vuelo o agrega a lista de espera. Retorna `RescheduleResult` (tipado, no bool). |
+| `src/modules/booking/Application/UseCases/PromoteFromWaitListUseCase.cs` | Toma la primera entrada pendiente de una lista de espera, reprograma la reserva al vuelo liberado, ajusta cupos en ambos vuelos y marca la entrada como *Promovida*. |
+
+---
+
+### Archivos Modificados
+
+| Archivo | Cambio |
+|---------|--------|
+| `src/modules/booking/Domain/Repositories/IBookingRepository.cs` | + `ListByFlightAsync(int idFlight)` |
+| `src/modules/booking/Infrastructure/Repositories/BookingRepository.cs` | Implementación de `ListByFlightAsync` |
+| `src/modules/flight/Domain/Repositories/IFlightRepository.cs` | + `ListByRouteAsync(int idRoute)` |
+| `src/modules/flight/Infrastructure/Repositories/FlightRepository.cs` | Implementación de `ListByRouteAsync` |
+| `src/modules/flight/Infrastructure/Entity/FlightEntity.cs` | + colecciones `OldFlightChanges`, `NewFlightChanges`, `WaitListEntries` |
+| `src/modules/booking/Infrastructure/Entity/BookingEntity.cs` | + colecciones `BookingFlightChanges`, `BookingWaitListEntries` |
+| `src/modules/systemStatus/Infrastructure/Entity/SystemStatusEntity.cs` | + colección `BookingWaitListEntries` |
+| `src/modules/systemStatus/Infrastructure/Entity/SystemStatusEntityConfiguration.cs` | + seeds: IdStatus 21 (*En Espera*), 22 (*Promovida*), 23 (*Expirada*) con EntityType `WaitList` |
+| `src/modules/booking/UI/BookingMenu.cs` | + menú admin opciones 8 y 9; + menú cliente opciones 4 y 5; + trigger de promoción automática al cancelar |
+
+---
+
+### Migración de Base de Datos
+
+**`20260424185536_AddBookingFlightChangeAndWaitList`**
+
+Crea las tablas:
+
+**`BookingFlightChange`**
+
+| Columna | Tipo | Descripción |
+|---------|------|-------------|
+| `IdChange` | int (PK, auto) | Identificador del registro |
+| `IdBooking` | int (FK) | Reserva reprogramada |
+| `IdOldFlight` | int (FK → Flight) | Vuelo de origen |
+| `IdNewFlight` | int (FK → Flight) | Vuelo de destino |
+| `ChangeDate` | datetime | Fecha y hora del cambio |
+| `Reason` | varchar(500), nullable | Motivo opcional |
+| `IdUser` | int (FK → User) | Usuario que ejecutó el cambio |
+
+**`BookingWaitList`**
+
+| Columna | Tipo | Descripción |
+|---------|------|-------------|
+| `IdWaitList` | int (PK, auto) | Identificador de la entrada |
+| `IdBooking` | int (FK) | Reserva en espera |
+| `IdFlight` | int (FK) | Vuelo deseado |
+| `Position` | int | Posición en la cola (empieza en 1) |
+| `RequestedAt` | datetime | Timestamp de ingreso a la cola |
+| `IdStatus` | int (FK → SystemStatus) | Estado: En Espera / Promovida / Expirada |
+
+Inserta los seeds de estado:
+
+| IdStatus | StatusName | EntityType |
+|----------|-----------|------------|
+| 21 | En Espera | WaitList |
+| 22 | Promovida | WaitList |
+| 23 | Expirada | WaitList |
+
+---
+
+### Nuevas Opciones de Menú
+
+#### Administrador (`BookingMenu`)
+
+| Opción | Función |
+|--------|---------|
+| `8. Lista de espera por vuelo` | Selecciona un vuelo y muestra todas sus entradas en espera ordenadas por posición, con estado. |
+| `9. Historial de cambios de vuelo` | Selecciona una reserva y muestra el historial completo de reprogramaciones con fecha, motivo, vuelo anterior, vuelo nuevo y usuario. |
+
+#### Cliente (`BookingMenu`)
+
+| Opción | Función |
+|--------|---------|
+| `4. Reprogramar mi reserva` | Lista las reservas propias confirmadas/pagadas, permite elegir un nuevo vuelo (mismo origen/destino). Si hay cupo: reprograma inmediatamente. Si no hay cupo: ingresa a lista de espera e informa la posición obtenida. |
+| `5. Mi lista de espera` | Muestra todas las entradas en lista de espera asociadas a las reservas del cliente, con posición, vuelo deseado y estado actual. |
+
+---
+
+### Flujo Completo: Reprogramación con Lista de Espera
+
+```
+Cliente solicita reprogramar reserva R al vuelo V
+        │
+        ▼
+¿Vuelo V tiene la misma ruta que el vuelo actual?
+        │ No → Error: "Vuelos incompatibles"
+        │ Sí
+        ▼
+¿Vuelo V tiene cupos suficientes?
+        │ Sí → Reasignar reserva a V
+        │       Liberar cupos en vuelo anterior
+        │       Ocupar cupos en V
+        │       Registrar BookingFlightChange
+        │       → "Reserva reprogramada exitosamente"
+        │
+        │ No → ¿Reserva ya está en espera para V?
+                │ Sí → Error: "Ya está en lista de espera"
+                │ No → Calcular posición (entradas pendientes + 1)
+                │       Crear BookingWaitList con estado "En Espera"
+                │       → "Quedaste en lista de espera en posición X"
+```
+
+```
+Admin/Cliente cancela reserva R (vuelo V)
+        │
+        ▼
+Registrar BookingCancellation
+Marcar reserva como "Cancelada"
+Restaurar cupos en vuelo V
+        │
+        ▼
+¿Hay entradas "En Espera" para el vuelo V?
+        │ No → Fin
+        │ Sí → Tomar la de menor posición (primera en cola)
+                ¿La reserva asociada sigue activa (confirmada/pagada)?
+                │ No → Fin (sin promoción)
+                │ Sí → Reasignar reserva al vuelo V
+                │       Liberar cupos en el vuelo original de esa reserva
+                │       Ocupar cupos en V
+                │       Marcar entrada como "Promovida"
+                │       Registrar BookingFlightChange (motivo automático)
+                │       → "Se promovió automáticamente una reserva desde la lista de espera"
+```
+
+---
+
