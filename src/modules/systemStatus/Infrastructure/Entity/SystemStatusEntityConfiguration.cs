@@ -50,7 +50,10 @@ public sealed class SystemStatusEntityConfiguration : IEntityTypeConfiguration<S
             new SystemStatusEntity { IdStatus = 17, StatusName = "Aprobado",     EntityType = "Payment" },
             new SystemStatusEntity { IdStatus = 18, StatusName = "Pendiente",    EntityType = "Payment" },
             new SystemStatusEntity { IdStatus = 19, StatusName = "Rechazado",    EntityType = "Payment" },
-            new SystemStatusEntity { IdStatus = 20, StatusName = "Pagada",       EntityType = "Booking" }
+            new SystemStatusEntity { IdStatus = 20, StatusName = "Pagada",       EntityType = "Booking" },
+            new SystemStatusEntity { IdStatus = 21, StatusName = "En Espera",   EntityType = "WaitList" },
+            new SystemStatusEntity { IdStatus = 22, StatusName = "Promovida",   EntityType = "WaitList" },
+            new SystemStatusEntity { IdStatus = 23, StatusName = "Expirada",    EntityType = "WaitList" }
         );
     }
 }

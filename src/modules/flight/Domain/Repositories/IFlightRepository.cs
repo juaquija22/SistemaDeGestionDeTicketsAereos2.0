@@ -24,4 +24,7 @@ public interface IFlightRepository
 
     // Elimina un vuelo del sistema por su ID
     Task DeleteAsync(FlightId id, CancellationToken ct = default);
+
+    // Retorna todos los vuelos de una ruta — para mostrar vuelos compatibles al reprogramar
+    Task<IReadOnlyList<Flight>> ListByRouteAsync(int idRoute, CancellationToken ct = default);
 }

@@ -1,6 +1,7 @@
 // El estado del sistema es compartido por varias entidades: vuelos, reservas, tiquetes, pagos, etc.
 using SistemaDeGestionDeTicketsAereos.src.modules.booking.Infrastructure.Entity;
 using SistemaDeGestionDeTicketsAereos.src.modules.bookingStatusHistory.Infrastructure.Entity;
+using SistemaDeGestionDeTicketsAereos.src.modules.bookingWaitList.Infrastructure.Entity;
 using SistemaDeGestionDeTicketsAereos.src.modules.CheckIn.Infrastructure.Entity;
 using SistemaDeGestionDeTicketsAereos.src.modules.flight.Infrastructure.Entity;
 using SistemaDeGestionDeTicketsAereos.src.modules.flightStatusHistory.Infrastructure.Entity;
@@ -47,4 +48,7 @@ public class SystemStatusEntity
 
     // Historial de cambios de estado de tiquetes
     public ICollection<TicketStatusHistoryEntity> TicketStatusHistories { get; set; } = new List<TicketStatusHistoryEntity>();
+
+    // Entradas de lista de espera con este estado
+    public ICollection<BookingWaitListEntity> BookingWaitListEntries { get; set; } = new List<BookingWaitListEntity>();
 }

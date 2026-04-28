@@ -553,17 +553,17 @@ public sealed class FlightMenu
         var flight = legList.First(f => f.Id.Value == id);
         var flightDateTime = flight.Date.Value.ToDateTime(flight.DepartureTime.Value);
 
-        if (flight.AvailableSeats.Value < seatCount)
+        if (flight.AvailableSeats.Value < seatCount && flight.AvailableSeats.Value < 1)
         {
-            AnsiConsole.MarkupLine(
-                $"\n[red]Este vuelo de {legTitle} no tiene cupo para las {seatCount} persona(s) de la búsqueda. " +
-                $"Cupo a la venta ahora: [bold]{flight.AvailableSeats.Value}[/] de [bold]{flight.TotalCapacity.Value}[/] de capacidad del vuelo " +
-                $"(si la capacidad es mayor que lo disponible, el resto ya está reservado o el cupo inicial se fijó menor al crear el vuelo).[/]");
-            AnsiConsole.MarkupLine("[grey]Elegí otro vuelo o volvé a buscar con otra cantidad de pasajeros.[/]");
-            AnsiConsole.MarkupLine("[grey]Presiona cualquier tecla para continuar...[/]");
-            Console.ReadKey();
-            return (false, 0);
+            // Vuelo completamente lleno: saltear selección de tarifa y ofrecer lista de espera de inmediato
+            return await new BookingMenu().CreateFromSelectedFlightAsync(
+                id, flightDateTime, ct,
+                seatsFromSearch: seatCount,
+                skipIntroConfirm: true,
+                seatSelectionFlightLegLabel: legTitle);
         }
+        // Si hay asientos parciales (0 < disponibles < solicitados): continuar a selección de tarifa;
+        // CreateFromSelectedFlightAsync ofrecerá ajustar la cantidad o unirse a la lista de espera.
 
         string? bundledObservation = null;
         if ((legTitle == "IDA" || legTitle == "VUELTA") && AppState.IdUserRole != 1)
@@ -1412,7 +1412,7 @@ public sealed class FlightMenu
             table.AddColumn("Origen→Destino");
             table.AddColumn("Id ruta");
             table.AddColumn("Aeronave");
-            table.AddColumn("Cupo venta/cap.");
+            table.AddColumn("Asientos disponibles");
             table.AddColumn("Tarifa");
             table.AddColumn("Precio");
             table.AddColumn("Estado");
@@ -1453,7 +1453,7 @@ public sealed class FlightMenu
                     Markup.Escape(leg),
                     routeId,
                     Markup.Escape(aircraftCell),
-                    $"{f.AvailableSeats.Value}/{f.TotalCapacity.Value}",
+                    $"{f.AvailableSeats.Value} de {f.TotalCapacity.Value}",
                     Markup.Escape(fareCell),
                     Markup.Escape(priceCell),
                     Markup.Escape(status),

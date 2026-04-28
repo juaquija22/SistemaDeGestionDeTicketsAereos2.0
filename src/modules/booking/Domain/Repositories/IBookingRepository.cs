@@ -23,4 +23,7 @@ public interface IBookingRepository
 
     // Elimina una reserva por su ID
     Task DeleteAsync(BookingId id, CancellationToken ct = default);
+
+    // Retorna todas las reservas asociadas a un vuelo — para liberar cupos y revisar lista de espera
+    Task<IReadOnlyList<Booking>> ListByFlightAsync(int idFlight, CancellationToken ct = default);
 }
